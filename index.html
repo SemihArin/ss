@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0A0C">
+<meta name="description" content="SS Arşiv — ekran fotoğraflarını OCR ile okur, etiketler, aratınca bulur.">
+<title>SS Arşiv — Ekran Fotoğrafı Arşivi</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230A0A0C'/%3E%3Cpath d='M14 26v-8a4 4 0 0 1 4-4h8M50 38v8a4 4 0 0 1-4 4h-8' fill='none' stroke='%23FFD21E' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A0A0C;
+  --panel:#131317;
+  --panel2:#1A1A20;
+  --line:#26262E;
+  --line2:#34343E;
+  --txt:#F2F1EC;
+  --mut:#8B8B96;
+  --dim:#5B5B66;
+  --acc:#FFD21E;          /* vurgu: fosforlu kalem sarısı */
+  --acc-ink:#0A0A0C;
+  --ok:#4ADE80;
+  --err:#FF5D5D;
+  --r:8px;
+  --df:'Bebas Neue', sans-serif;
+  --bf:'Space Grotesk', sans-serif;
+  --mf:'Space Mono', monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+[hidden]{display:none!important}
+html{scrollbar-color:#2E2E38 var(--bg)}
+body{
+  background:var(--bg);
+  color:var(--txt);
+  font-family:var(--bf);
+  font-size:15px;
+  line-height:1.5;
+  min-height:100dvh;
+  -webkit-font-smoothing:antialiased;
+}
+body.lock{overflow:hidden}
+img{display:block;max-width:100%}
+button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input{font-family:inherit;color:inherit}
+::selection{background:var(--acc);color:var(--acc-ink)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2E2E38;border-radius:8px;border:2px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- vurgu (arama eşleşmesi) ---------- */
+.hl{background:var(--acc);color:var(--acc-ink);font-weight:700;border-radius:2px;padding:0 2px}
+
+/* ---------- seçim çerçevesi köşeleri ---------- */
+.frame{position:relative}
+.frame::before,.frame::after,
+.frame>.c1,.frame>.c2{
+  content:"";position:absolute;width:16px;height:16px;
+  border:2px solid var(--acc);pointer-events:none;
+}
+.frame::before{top:-8px;left:-12px;border-right:0;border-bottom:0}
+.frame::after{bottom:-8px;right:-12px;border-left:0;border-top:0}
+.frame>.c1{top:-8px;right:-12px;border-left:0;border-bottom:0}
+.frame>.c2{bottom:-8px;left:-12px;border-right:0;border-top:0}
+
+/* ---------- tarama çizgisi ---------- */
+@keyframes scanY{0%{top:0}100%{top:calc(100% - 3px)}}
+.scanline{
+  position:absolute;left:0;right:0;top:0;height:3px;
+  background:linear-gradient(90deg,transparent,var(--acc),transparent);
+  box-shadow:0 0 14px 2px rgba(255,210,30,.45);
+  animation:scanY 1.3s ease-in-out infinite alternate;
+  pointer-events:none;
+}
+
+/* ---------- açılış ---------- */
+#splash{
+  position:fixed;inset:0;z-index:100;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  transition:opacity .35s;
+}
+#splash.gone{opacity:0;pointer-events:none}
+#splash .frame{font-family:var(--df);font-size:44px;letter-spacing:2px;padding:2px 6px;color:var(--txt)}
+@keyframes blink{50%{opacity:.25}}
+#splash .frame::before,#splash .frame::after,
+#splash .frame>.c1,#splash .frame>.c2{animation:blink 1s steps(2) infinite}
+
+/* ---------- giriş ekranı ---------- */
+#authScreen{
+  min-height:100dvh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:0;
+  padding:32px 20px;text-align:center;
+}
+.a-logo{
+  font-family:var(--df);font-size:clamp(64px,12vw,96px);
+  letter-spacing:4px;line-height:1;padding:6px 14px;color:var(--txt);
+}
+.a-tag{margin-top:26px;font-size:17px;color:var(--mut);max-width:420px}
+.a-tag b{color:var(--txt);font-weight:500}
+.a-steps{
+  margin-top:34px;display:flex;flex-direction:column;gap:10px;
+  font-family:var(--mf);font-size:13px;color:var(--mut);text-align:left;
+}
+.a-steps span{display:flex;align-items:baseline;gap:12px}
+.a-steps i{font-style:normal;color:var(--acc);font-weight:700}
+.gbtn{
+  margin-top:42px;display:inline-flex;align-items:center;gap:12px;
+  background:#fff;color:#111;font-weight:700;font-size:15px;
+  padding:14px 26px;border-radius:var(--r);
+  transition:transform .15s, box-shadow .15s;
+}
+.gbtn:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(255,210,30,.18)}
+.gbtn:active{transform:translateY(0)}
+.gbtn svg{width:20px;height:20px;flex:none}
+.a-note{margin-top:18px;font-family:var(--mf);font-size:11.5px;color:var(--dim)}
+
+/* ---------- üst çubuk ---------- */
+header{
+  position:sticky;top:0;z-index:40;
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:14px 22px;background:rgba(10,10,12,.86);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);
+}
+.logo{display:flex;align-items:baseline;gap:12px;font-family:var(--df);font-size:26px;letter-spacing:1.5px;user-select:none}
+.logo .frame{padding:0 5px;font-size:22px;color:var(--acc)}
+.logo .frame::before,.logo .frame::after,
+.logo .frame>.c1,.logo .frame>.c2{width:9px;height:9px;border-width:2px;top:auto;bottom:auto;left:auto;right:auto}
+.logo .frame::before{top:-5px;left:-7px}
+.logo .frame::after{bottom:-5px;right:-7px}
+.logo .frame>.c1{top:-5px;right:-7px}
+.logo .frame>.c2{bottom:-5px;left:-7px}
+
+.search{flex:1;max-width:560px;min-width:200px;position:relative;display:flex;align-items:center}
+.search svg{position:absolute;left:13px;width:16px;height:16px;stroke:var(--mut);pointer-events:none}
+.search input{
+  width:100%;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r);padding:10px 44px 10px 40px;font-size:14.5px;
+  transition:border-color .15s;
+}
+.search input::placeholder{color:var(--dim)}
+.search input:focus{border-color:var(--acc);outline:none}
+.search kbd{
+  position:absolute;right:11px;font-family:var(--mf);font-size:11px;
+  color:var(--dim);border:1px solid var(--line);border-radius:4px;
+  padding:1px 7px;pointer-events:none;
+}
+.user{display:flex;align-items:center;gap:10px;margin-left:auto}
+.user img{width:32px;height:32px;border-radius:50%;border:1.5px solid var(--line2)}
+.user .uname{font-size:13.5px;color:var(--mut);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iconbtn{
+  display:flex;align-items:center;gap:7px;font-family:var(--mf);font-size:12px;
+  color:var(--mut);border:1px solid var(--line);border-radius:var(--r);
+  padding:8px 13px;transition:.15s;
+}
+.iconbtn:hover{color:var(--txt);border-color:var(--line2)}
+
+/* ---------- ana alan ---------- */
+main{max-width:1440px;margin:0 auto;padding:22px}
+
+/* bırakma alanı */
+.dz{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  min-height:112px;border:1.5px dashed var(--line2);border-radius:var(--r);
+  color:var(--mut);cursor:pointer;position:relative;overflow:hidden;
+  transition:border-color .15s, background .15s;text-align:center;padding:16px;
+}
+.dz:hover{border-color:var(--acc);color:var(--txt)}
+.dz .d1{font-size:15px;font-weight:500}
+.dz .d2{font-family:var(--mf);font-size:11.5px;color:var(--dim)}
+.dz .dzc{position:absolute;width:15px;height:15px;border:2px solid var(--acc);opacity:0;transition:opacity .15s;pointer-events:none}
+.dz .dzc:nth-child(1){top:8px;left:8px;border-right:0;border-bottom:0}
+.dz .dzc:nth-child(2){top:8px;right:8px;border-left:0;border-bottom:0}
+.dz .dzc:nth-child(3){bottom:8px;left:8px;border-right:0;border-top:0}
+.dz .dzc:nth-child(4){bottom:8px;right:8px;border-left:0;border-top:0}
+.dz:hover .dzc{opacity:1}
+.dz.drag{border-color:var(--acc);background:rgba(255,210,30,.05);color:var(--txt)}
+.dz.drag .dzc{opacity:1}
+.dz.drag .scanline{display:block}
+.dz .scanline{display:none}
+
+/* sayaç + etiketler */
+.meta{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:18px 2px 14px}
+#count{font-family:var(--mf);font-size:12px;color:var(--dim);white-space:nowrap}
+#tagbar{display:flex;gap:8px;flex-wrap:wrap}
+.chip{
+  font-family:var(--mf);font-size:12px;color:var(--mut);
+  border:1px solid var(--line);border-radius:99px;padding:5px 12px;
+  transition:.15s;display:inline-flex;gap:7px;align-items:baseline;
+}
+.chip em{font-style:normal;color:var(--dim);font-size:11px}
+.chip:hover{border-color:var(--line2);color:var(--txt)}
+.chip.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);font-weight:700}
+.chip.on em{color:rgba(10,10,12,.6)}
+
+/* ızgara */
+#grid{columns:240px;column-gap:14px}
+.card{
+  break-inside:avoid;margin:0 0 14px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  cursor:pointer;transition:border-color .15s, transform .15s;
+}
+.card:hover{border-color:var(--line2);transform:translateY(-2px)}
+.card .thumb{position:relative;background:var(--panel2)}
+.card .thumb img{width:100%}
+.card .thumb .tc{position:absolute;width:14px;height:14px;border:2px solid var(--acc);opacity:0;transition:opacity .15s}
+.card .thumb .tc.a{top:7px;left:7px;border-right:0;border-bottom:0}
+.card .thumb .tc.b{bottom:7px;right:7px;border-left:0;border-top:0}
+.card:hover .thumb .tc{opacity:1}
+.cb{padding:11px 13px 12px}
+.snip{font-family:var(--mf);font-size:11.5px;line-height:1.55;color:var(--mut);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.snip .none{color:var(--dim);font-style:italic}
+.crow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px}
+.ctags{display:flex;gap:6px;flex-wrap:wrap}
+.ctags span{font-family:var(--mf);font-size:10.5px;color:var(--acc)}
+.crow time{font-family:var(--mf);font-size:10.5px;color:var(--dim);white-space:nowrap}
+
+/* boş durum */
+#empty{padding:80px 20px;text-align:center}
+#empty h2{font-family:var(--df);font-size:44px;letter-spacing:3px;color:var(--line2)}
+#empty p{margin-top:10px;color:var(--mut);font-size:14.5px}
+#empty p b{color:var(--acc);font-weight:500}
+
+/* ---------- yükleme kuyruğu ---------- */
+#queue{
+  position:fixed;right:18px;bottom:18px;z-index:60;width:320px;max-width:calc(100vw - 36px);
+  background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);
+  box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;
+}
+#queue .qh{font-family:var(--mf);font-size:11px;letter-spacing:1px;color:var(--dim);
+  padding:9px 14px;border-bottom:1px solid var(--line);text-transform:uppercase}
+#qList{max-height:46vh;overflow-y:auto}
+.qi{display:flex;gap:11px;padding:11px 14px;border-bottom:1px solid var(--line);align-items:center}
+.qi:last-child{border-bottom:0}
+.qt{position:relative;width:44px;height:44px;flex:none;border-radius:5px;background:var(--panel2) center/cover;overflow:hidden;border:1px solid var(--line)}
+.qi.scanning .qt .scanline{display:block}
+.qt .scanline{display:none}
+.qm{flex:1;min-width:0}
+.qm b{display:block;font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qs{display:block;font-family:var(--mf);font-size:10.5px;color:var(--mut);margin-top:2px}
+.qi.ok .qs{color:var(--ok)}
+.qi.err .qs{color:var(--err)}
+.qbar{display:block;height:3px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden}
+.qbar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+
+/* ---------- görüntü detayı ---------- */
+#modal{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:22px}
+#modal .back{position:absolute;inset:0;background:rgba(6,6,8,.82);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.dlg{
+  position:relative;display:flex;width:min(1100px,100%);max-height:calc(100dvh - 44px);
+  background:var(--panel);border:1px solid var(--line2);border-radius:12px;overflow:hidden;
+}
+.dimg{flex:1;min-width:0;background:#050506;display:flex;align-items:center;justify-content:center;padding:26px}
+.dimg .frame{max-width:100%;max-height:100%;display:flex}
+.dimg img{max-width:100%;max-height:calc(100dvh - 100px);object-fit:contain}
+.dside{width:380px;flex:none;display:flex;flex-direction:column;border-left:1px solid var(--line);min-height:0}
+.dhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line)}
+.dmeta{font-family:var(--mf);font-size:11.5px;color:var(--mut);line-height:1.7}
+.dclose{font-size:20px;color:var(--mut);width:34px;height:34px;border-radius:6px;flex:none}
+.dclose:hover{color:var(--txt);background:var(--panel2)}
+.dtags{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.mtag{display:inline-flex;align-items:center;gap:6px;font-family:var(--mf);font-size:11.5px;color:var(--acc);
+  border:1px solid rgba(255,210,30,.35);border-radius:99px;padding:4px 6px 4px 11px}
+.mtag button{color:var(--dim);font-size:13px;line-height:1;padding:1px 4px;border-radius:99px}
+.mtag button:hover{color:var(--err)}
+#mTagIn{background:none;border:1px dashed var(--line2);border-radius:99px;padding:4px 12px;
+  font-family:var(--mf);font-size:11.5px;width:100px;color:var(--txt)}
+#mTagIn:focus{border-color:var(--acc);outline:none}
+#mTagIn::placeholder{color:var(--dim)}
+.dlabel{display:flex;justify-content:space-between;align-items:center;padding:13px 18px 0}
+.dlabel span{font-family:var(--mf);font-size:10.5px;letter-spacing:1.5px;color:var(--dim)}
+.tbtn{font-family:var(--mf);font-size:11px;color:var(--mut);padding:4px 9px;border:1px solid var(--line);border-radius:5px}
+.tbtn:hover{color:var(--txt);border-color:var(--line2)}
+#mText{
+  flex:1;min-height:80px;overflow-y:auto;margin:10px 18px 14px;padding:13px 14px;
+  background:var(--bg);border:1px solid var(--line);border-radius:var(--r);
+  font-family:var(--mf);font-size:12px;line-height:1.7;color:#C9C9CF;white-space:pre-wrap;word-break:break-word;
+}
+#mText .none{color:var(--dim)}
+.dact{display:flex;gap:9px;padding:0 18px 18px}
+.abtn{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:13.5px;font-weight:500;padding:11px;border-radius:var(--r);
+  border:1px solid var(--line2);transition:.15s;
+}
+.abtn:hover{border-color:var(--acc);color:var(--acc)}
+.abtn.danger:hover{border-color:var(--err);color:var(--err)}
+.abtn.armed{background:var(--err);border-color:var(--err);color:#fff;font-weight:700}
+
+/* ---------- bildirim ---------- */
+#toasts{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:90;
+  display:flex;flex-direction:column;gap:9px;align-items:center;pointer-events:none}
+.toast{
+  background:var(--panel2);border:1px solid var(--line2);color:var(--txt);
+  font-size:13.5px;padding:11px 20px;border-radius:99px;
+  opacity:0;transform:translateY(10px);transition:.25s;box-shadow:0 8px 30px rgba(0,0,0,.45);
+}
+.toast.in{opacity:1;transform:translateY(0)}
+.toast.err{border-color:rgba(255,93,93,.5);color:#FFB3B3}
+.toast.ok{border-color:rgba(74,222,128,.4);color:#B7F1CB}
+
+/* ---------- duyarlılık ---------- */
+@media (max-width:860px){
+  .dlg{flex-direction:column;overflow-y:auto}
+  .dimg{padding:16px}
+  .dimg img{max-height:44vh}
+  .dside{width:100%;border-left:0;border-top:1px solid var(--line)}
+  #mText{max-height:34vh}
+}
+@media (max-width:720px){
+  header{padding:12px 16px;gap:12px}
+  .search{order:3;flex-basis:100%;max-width:none}
+  .search kbd{display:none}
+  .user .uname{display:none}
+  main{padding:16px}
+  #grid{columns:170px;column-gap:11px}
+  .card{margin-bottom:11px}
+  .dz{min-height:92px}
+  #queue{right:12px;bottom:12px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<!-- açılış -->
+<div id="splash"><div class="frame">SS ARŞİV<i class="c1"></i><i class="c2"></i></div></div>
+
+<!-- giriş -->
+<section id="authScreen" hidden>
+  <h1 class="a-logo frame">SS ARŞİV<i class="c1"></i><i class="c2"></i></h1>
+  <p class="a-tag">Herkes tonla ekran fotoğrafı alıyor, sonra bulamıyor.<br><b>Burası bulur.</b></p>
+  <div class="a-steps">
+    <span><i>01</i> OCR ile içeriği okur</span>
+    <span><i>02</i> Otomatik etiketler</span>
+    <span><i>03</i> Aratınca bulur</span>
+  </div>
+  <button id="btnGoogle" class="gbtn">
+    <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/></svg>
+    Google ile giriş yap
+  </button>
+  <p class="a-note">Görüntüler yalnızca senin hesabına kaydedilir.</p>
+</section>
+
+<!-- uygulama -->
+<div id="app" hidden>
+  <header>
+    <div class="logo"><span class="frame">SS<i class="c1"></i><i class="c2"></i></span> ARŞİV</div>
+    <div class="search">
+      <svg fill="none" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" placeholder="Metin, etiket veya içerik ara…" autocomplete="off">
+      <kbd>/</kbd>
+    </div>
+    <div class="user">
+      <img id="uAva" alt="" referrerpolicy="no-referrer">
+      <span class="uname" id="uName"></span>
+      <button id="btnOut" class="iconbtn">ÇIKIŞ</button>
+    </div>
+  </header>
+
+  <main>
+    <label class="dz" id="dz" tabindex="0" role="button" aria-label="Ekran fotoğrafı yükle">
+      <i class="dzc"></i><i class="dzc"></i><i class="dzc"></i><i class="dzc"></i>
+      <span class="scanline"></span>
+      <span class="d1">Ekran fotoğraflarını buraya bırak</span>
+      <span class="d2">TIKLA · SÜRÜKLE · CTRL+V — PNG / JPG / WEBP</span>
+      <input id="fileIn" type="file" accept="image/*" multiple hidden>
+    </label>
+
+    <div class="meta">
+      <span id="count"></span>
+      <div id="tagbar" hidden></div>
+    </div>
+
+    <div id="grid"></div>
+
+    <div id="empty" hidden>
+      <h2 id="emptyH">ARŞİV BOŞ</h2>
+      <p id="emptyP"></p>
+    </div>
+  </main>
+</div>
+
+<!-- yükleme kuyruğu -->
+<div id="queue" hidden>
+  <div class="qh">İşleniyor</div>
+  <div id="qList"></div>
+</div>
+
+<!-- detay -->
+<div id="modal" hidden>
+  <div class="back" id="mBack"></div>
+  <div class="dlg" role="dialog" aria-modal="true" aria-label="Görüntü detayı">
+    <div class="dimg">
+      <span class="frame"><img id="mImg" alt="Ekran fotoğrafı"><i class="c1"></i><i class="c2"></i></span>
+    </div>
+    <div class="dside">
+      <div class="dhead">
+        <div class="dmeta"><span id="mDate"></span><br><span id="mDims"></span></div>
+        <button class="dclose" id="mClose" aria-label="Kapat">✕</button>
+      </div>
+      <div class="dtags">
+        <span id="mTags" style="display:contents"></span>
+        <input id="mTagIn" placeholder="+ etiket" maxlength="24">
+      </div>
+      <div class="dlabel">
+        <span>OKUNAN METİN</span>
+        <button class="tbtn" id="mCopy">KOPYALA</button>
+      </div>
+      <div id="mText"></div>
+      <div class="dact">
+        <button class="abtn" id="mDown">İndir</button>
+        <button class="abtn danger" id="mDel">Sil</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+/* ================================================================
+   FIREBASE YAPILANDIRMASI — kendi projenin config'ini buraya yapıştır.
+   Console'da gerekenler:
+     1) Authentication → Sign-in method → Google: Etkinleştir
+     2) Firestore Database → Oluştur (bölge: europe-west1)
+     3) Firestore Rules:
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /users/{uid}/shots/{doc} {
+              allow read, write: if request.auth != null && request.auth.uid == uid;
+            }
+          }
+        }
+   Not: Storage GEREKMEZ — görüntüler sıkıştırılıp Firestore'da tutulur.
+   ================================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDskdRcxsoGb5_n1Ifjo_MwOHZjDqMMYCg",
+  authDomain: "s321-32be4.firebaseapp.com",
+  databaseURL: "https://s321-32be4.firebaseio.com",
+  projectId: "s321-32be4",
+  storageBucket: "s321-32be4.firebasestorage.app",
+  messagingSenderId: "1014204689679",
+  appId: "1:1014204689679:web:4a192710b08304a28ca27a",
+  measurementId: "G-2LJGJKF1KR"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+/* ---------------- durum ---------------- */
+let USER = null, SHOTS = [], unsub = null;
+let query = '', activeTag = null, openId = null;
+let ocrWorker = null, ocrReady = false, progCb = null;
+let busy = false, dragC = 0, delTimer = null, qDebounce = null;
+const PENDING = [];
+
+const $ = s => document.querySelector(s);
+const splash = $('#splash'), authScr = $('#authScreen'), app = $('#app');
+const grid = $('#grid'), emptyEl = $('#empty'), emptyH = $('#emptyH'), emptyP = $('#emptyP');
+const tagbar = $('#tagbar'), countEl = $('#count'), qInput = $('#q');
+const dz = $('#dz'), fileIn = $('#fileIn'), queueEl = $('#queue'), qList = $('#qList');
+const modal = $('#modal'), mImg = $('#mImg'), mDate = $('#mDate'), mDims = $('#mDims');
+const mTags = $('#mTags'), mTagIn = $('#mTagIn'), mText = $('#mText');
+
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const trLower = s => (s || '').toLocaleLowerCase('tr-TR');
+const DF = new Intl.DateTimeFormat('tr-TR', {day:'2-digit', month:'short', year:'numeric'});
+const fmtDate = ts => { try { return ts && ts.toDate ? DF.format(ts.toDate()) : '—'; } catch(e){ return '—'; } };
+const fmtBytes = n => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : Math.round(n/1024)+' KB';
+
+/* ---------------- bildirim ---------------- */
+function toast(msg, type){
+  const d = document.createElement('div');
+  d.className = 'toast ' + (type || '');
+  d.textContent = msg;
+  $('#toasts').appendChild(d);
+  requestAnimationFrame(() => d.classList.add('in'));
+  setTimeout(() => { d.classList.remove('in'); setTimeout(() => d.remove(), 300); }, 3200);
+}
+
+/* ---------------- kimlik ---------------- */
+auth.onAuthStateChanged(u => {
+  USER = u;
+  splash.classList.add('gone');
+  if (u) {
+    authScr.hidden = true; app.hidden = false;
+    $('#uAva').src = u.photoURL || '';
+    $('#uName').textContent = u.displayName || u.email || '';
+    listen();
+  } else {
+    app.hidden = true; authScr.hidden = false;
+    if (unsub) { unsub(); unsub = null; }
+    SHOTS = []; render();
+  }
+});
+
+$('#btnGoogle').addEventListener('click', async () => {
+  const prov = new firebase.auth.GoogleAuthProvider();
+  try { await auth.signInWithPopup(prov); }
+  catch (e) {
+    if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+    try { await auth.signInWithRedirect(prov); }
+    catch (e2) { toast('Giriş yapılamadı — Firebase yapılandırmasını kontrol et.', 'err'); }
+  }
+});
+$('#btnOut').addEventListener('click', () => auth.signOut());
+
+/* ---------------- veri ---------------- */
+function listen(){
+  if (unsub) unsub();
+  unsub = db.collection('users').doc(USER.uid).collection('shots')
+    .orderBy('createdAt', 'desc')
+    .onSnapshot(s => {
+      SHOTS = s.docs.map(d => ({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }));
+      render();
+      if (openId) fillModal();
+    }, () => toast('Veri okunamadı — Firestore kurallarını kontrol et.', 'err'));
+}
+
+/* ---------------- görünüm ---------------- */
+function filtered(){
+  const q2 = trLower(query).trim();
+  return SHOTS.filter(s => {
+    if (activeTag && !(s.tags || []).includes(activeTag)) return false;
+    if (!q2) return true;
+    return ((s.textLower || '') + ' ' + trLower((s.tags || []).join(' '))).includes(q2);
+  });
+}
+
+function makeSnippet(raw){
+  const t = (raw || '').replace(/\s+/g, ' ').trim();
+  if (!t) return '<i class="none">metin bulunamadı</i>';
+  const q2 = trLower(query).trim();
+  if (!q2) return esc(t.slice(0, 140));
+  const low = trLower(t), i = low.indexOf(q2);
+  if (i < 0) return esc(t.slice(0, 140));
+  const a = Math.max(0, i - 40), b = Math.min(t.length, i + q2.length + 80);
+  return (a > 0 ? '…' : '') + esc(t.slice(a, i)) +
+    '<b class="hl">' + esc(t.slice(i, i + q2.length)) + '</b>' +
+    esc(t.slice(i + q2.length, b)) + (b < t.length ? '…' : '');
+}
+
+function render(){
+  const list = filtered();
+
+  grid.innerHTML = list.map(s => `
+    <article class="card" data-id="${s.id}">
+      <div class="thumb"><img src="${s.img}" alt="" loading="lazy"><i class="tc a"></i><i class="tc b"></i></div>
+      <div class="cb">
+        <p class="snip">${makeSnippet(s.text)}</p>
+        <div class="crow">
+          <div class="ctags">${(s.tags || []).slice(0, 3).map(t => '<span>#' + esc(t) + '</span>').join('')}</div>
+          <time>${fmtDate(s.createdAt)}</time>
+        </div>
+      </div>
+    </article>`).join('');
+
+  const totalBytes = SHOTS.reduce((a, s) => a + (s.bytes || 0), 0);
+  countEl.textContent = (query || activeTag ? list.length + ' / ' : '') +
+    SHOTS.length + ' görüntü · ' + fmtBytes(totalBytes);
+
+  const m = new Map();
+  SHOTS.forEach(s => (s.tags || []).forEach(t => m.set(t, (m.get(t) || 0) + 1)));
+  const tags = [...m.entries()].sort((a, b) => b[1] - a[1]);
+  tagbar.hidden = tags.length === 0;
+  tagbar.innerHTML = tags.map(([t, n]) =>
+    `<button class="chip${t === activeTag ? ' on' : ''}" data-tag="${esc(t)}">#${esc(t)}<em>${n}</em></button>`).join('');
+
+  const none = list.length === 0;
+  emptyEl.hidden = !none;
+  if (none) {
+    if (SHOTS.length === 0) {
+      emptyH.textContent = 'ARŞİV BOŞ';
+      emptyP.innerHTML = 'İlk ekran fotoğrafını bırak — metnini okuyup <b>aranabilir</b> yapalım.';
+    } else {
+      emptyH.textContent = 'SONUÇ YOK';
+      emptyP.innerHTML = '<b>' + esc(query || '#' + activeTag) + '</b> hiçbir görüntüde geçmiyor.';
+    }
+  }
+}
+
+grid.addEventListener('click', e => {
+  const c = e.target.closest('.card');
+  if (c) openModal(c.dataset.id);
+});
+tagbar.addEventListener('click', e => {
+  const c = e.target.closest('.chip');
+  if (!c) return;
+  activeTag = activeTag === c.dataset.tag ? null : c.dataset.tag;
+  render();
+});
+qInput.addEventListener('input', () => {
+  clearTimeout(qDebounce);
+  qDebounce = setTimeout(() => { query = qInput.value; render(); }, 120);
+});
+
+/* ---------------- OCR ---------------- */
+async function getWorker(){
+  if (ocrWorker) return ocrWorker;
+  ocrWorker = await Tesseract.createWorker('tur+eng', 1, {
+    logger: m => { if (m.status === 'recognizing text' && progCb) progCb(m.progress); }
+  });
+  ocrReady = true;
+  return ocrWorker;
+}
+async function runOCR(file, onp){
+  progCb = onp;
+  const w = await getWorker();
+  const { data } = await w.recognize(file);
+  progCb = null;
+  return data.text || '';
+}
+
+function autoTags(t){
+  const tags = [];
+  if (/(https?:\/\/|www\.)\S+/i.test(t)) tags.push('link');
+  if (/[\w.+-]+@[\w-]+\.[a-z]{2,}/i.test(t)) tags.push('e-posta');
+  if (/(\+90[\s-]?)?0?5\d{2}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}/.test(t)) tags.push('telefon');
+  if (/₺|\bTL\b|€|\$/.test(t) && /\d/.test(t)) tags.push('fiyat');
+  if (/\b\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}\b/.test(t)) tags.push('tarih');
+  if (((t.match(/[{};]|=>|<\/|\bconst\b|\bfunction\b|\bimport\b/g)) || []).length >= 3) tags.push('kod');
+  return tags;
+}
+
+/* ---------------- yükleme hattı ---------------- */
+const readFile = f => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result);
+  r.onerror = () => rej(new Error('read'));
+  r.readAsDataURL(f);
+});
+const loadImg = url => new Promise((res, rej) => {
+  const i = new Image();
+  i.onload = () => res(i);
+  i.onerror = () => rej(new Error('img'));
+  i.src = url;
+});
+
+function compress(img){
+  let maxDim = 1280, q = 0.8;
+  for (let i = 0; i < 7; i++) {
+    const sc = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * sc));
+    const h = Math.max(1, Math.round(img.height * sc));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const url = c.toDataURL('image/jpeg', q);
+    if (url.length < 880000) return { url, w, h };
+    if (q > 0.55) q -= 0.1; else maxDim = Math.round(maxDim * 0.8);
+  }
+  return null;
+}
+
+function handleFiles(files){
+  const imgs = [...files].filter(f => f.type && f.type.startsWith('image/'));
+  if (!imgs.length) { toast('Görüntü dosyası seç (PNG, JPG…).', 'err'); return; }
+  imgs.forEach(f => {
+    const id = 'q' + Math.random().toString(36).slice(2, 9);
+    PENDING.push({ file: f, id });
+    addQueueItem(id, f);
+  });
+  runQueue();
+}
+
+async function runQueue(){
+  if (busy) return;
+  busy = true;
+  while (PENDING.length) {
+    const it = PENDING.shift();
+    try {
+      await processOne(it);
+      qDone(it.id, 'Arşive eklendi', 'ok');
+    } catch (e) {
+      console.error(e);
+      qDone(it.id, e.userMsg || 'Kaydedilemedi', 'err');
+    }
+  }
+  busy = false;
+}
+
+async function processOne({ file, id }){
+  qStatus(id, 'Görüntü açılıyor…');
+  const durl = await readFile(file);
+  const img = await loadImg(durl);
+  setQThumb(id, durl);
+
+  qStatus(id, ocrReady ? 'Metin okunuyor…' : 'OCR modeli indiriliyor…');
+  qScan(id, true);
+  const text = await runOCR(file, p => qProg(id, p));
+  qScan(id, false);
+
+  qStatus(id, 'Sıkıştırılıyor…');
+  const c = compress(img);
+  if (!c) { const err = new Error('big'); err.userMsg = 'Görüntü 1 MB altına inmedi'; throw err; }
+
+  qStatus(id, 'Kaydediliyor…');
+  const clean = text.replace(/\n{3,}/g, '\n\n').trim();
+  await db.collection('users').doc(USER.uid).collection('shots').add({
+    img: c.url, w: c.w, h: c.h, bytes: c.url.length,
+    text: clean, textLower: trLower(clean),
+    tags: autoTags(clean),
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+/* kuyruk arayüzü */
+function addQueueItem(id, file){
+  const d = document.createElement('div');
+  d.className = 'qi'; d.id = id;
+  d.innerHTML = '<div class="qt"><span class="scanline"></span></div>' +
+    '<div class="qm"><b>' + esc(file.name || 'pano görüntüsü') + '</b>' +
+    '<span class="qs">Sırada…</span><span class="qbar"><i></i></span></div>';
+  qList.appendChild(d);
+  queueEl.hidden = false;
+}
+const qEl = id => document.getElementById(id);
+function setQThumb(id, url){ const e = qEl(id); if (e) e.querySelector('.qt').style.backgroundImage = 'url(' + url + ')'; }
+function qStatus(id, txt){ const e = qEl(id); if (e) e.querySelector('.qs').textContent = txt; }
+function qProg(id, p){ const e = qEl(id); if (e) e.querySelector('.qbar i').style.width = Math.round(p * 100) + '%'; }
+function qScan(id, on){ const e = qEl(id); if (e) e.classList.toggle('scanning', on); }
+function qDone(id, txt, cls){
+  const e = qEl(id); if (!e) return;
+  e.classList.add(cls);
+  e.querySelector('.qs').textContent = txt;
+  e.querySelector('.qbar i').style.width = '100%';
+  setTimeout(() => {
+    e.remove();
+    if (!qList.children.length && !PENDING.length && !busy) queueEl.hidden = true;
+  }, cls === 'err' ? 6000 : 2600);
+}
+
+/* giriş yolları: tıkla / sürükle / yapıştır */
+fileIn.addEventListener('change', () => { handleFiles(fileIn.files); fileIn.value = ''; });
+dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileIn.click(); } });
+window.addEventListener('dragenter', e => { if (!USER) return; e.preventDefault(); dragC++; dz.classList.add('drag'); });
+window.addEventListener('dragover', e => { if (!USER) return; e.preventDefault(); });
+window.addEventListener('dragleave', () => { if (!USER) return; dragC = Math.max(0, dragC - 1); if (!dragC) dz.classList.remove('drag'); });
+window.addEventListener('drop', e => {
+  if (!USER) return;
+  e.preventDefault(); dragC = 0; dz.classList.remove('drag');
+  if (e.dataTransfer && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+});
+window.addEventListener('paste', e => {
+  if (!USER || !e.clipboardData) return;
+  const items = [...e.clipboardData.items].filter(i => i.type.startsWith('image/'));
+  if (!items.length) return;
+  e.preventDefault();
+  handleFiles(items.map(i => i.getAsFile()).filter(Boolean));
+});
+
+/* ---------------- detay ---------------- */
+function openModal(id){
+  openId = id;
+  fillModal();
+  modal.hidden = false;
+  document.body.classList.add('lock');
+}
+function closeModal(){
+  openId = null;
+  modal.hidden = true;
+  document.body.classList.remove('lock');
+  resetDel();
+}
+function shot(){ return SHOTS.find(x => x.id === openId); }
+
+function highlightAll(raw){
+  const t = (raw || '').trim();
+  if (!t) return '<i class="none">Bu görüntüde metin bulunamadı.</i>';
+  const q2 = trLower(query).trim();
+  if (!q2) return esc(t);
+  const low = trLower(t);
+  let out = '', i = 0;
+  while (true) {
+    const j = low.indexOf(q2, i);
+    if (j < 0) { out += esc(t.slice(i)); break; }
+    out += esc(t.slice(i, j)) + '<b class="hl">' + esc(t.slice(j, j + q2.length)) + '</b>';
+    i = j + q2.length;
+  }
+  return out;
+}
+
+function fillModal(){
+  const s = shot();
+  if (!s) { closeModal(); return; }
+  mImg.src = s.img;
+  mDate.textContent = fmtDate(s.createdAt);
+  mDims.textContent = (s.w || '?') + ' × ' + (s.h || '?') + ' px · ' + fmtBytes(s.bytes || 0);
+  mText.innerHTML = highlightAll(s.text);
+  mTags.innerHTML = (s.tags || []).map(t =>
+    '<span class="mtag">#' + esc(t) + '<button data-del="' + esc(t) + '" aria-label="etiketi sil">×</button></span>').join('');
+}
+
+$('#mClose').addEventListener('click', closeModal);
+$('#mBack').addEventListener('click', closeModal);
+
+mTags.addEventListener('click', e => {
+  const b = e.target.closest('[data-del]');
+  if (!b || !openId) return;
+  db.collection('users').doc(USER.uid).collection('shots').doc(openId)
+    .update({ tags: firebase.firestore.FieldValue.arrayRemove(b.dataset.del) });
+});
+mTagIn.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const v = trLower(mTagIn.value).trim().replace(/^#/, '').replace(/\s+/g, '-');
+  if (!v || !openId) return;
+  db.collection('users').doc(USER.uid).collection('shots').doc(openId)
+    .update({ tags: firebase.firestore.FieldValue.arrayUnion(v) });
+  mTagIn.value = '';
+});
+
+$('#mCopy').addEventListener('click', async () => {
+  const s = shot(); if (!s) return;
+  try { await navigator.clipboard.writeText(s.text || ''); toast('Metin kopyalandı', 'ok'); }
+  catch (e) { toast('Kopyalanamadı', 'err'); }
+});
+$('#mDown').addEventListener('click', () => {
+  const s = shot(); if (!s) return;
+  const a = document.createElement('a');
+  a.href = s.img;
+  a.download = 'ss-arsiv-' + s.id.slice(0, 6) + '.jpg';
+  a.click();
+});
+
+const mDel = $('#mDel');
+function resetDel(){ clearTimeout(delTimer); mDel.classList.remove('armed'); mDel.textContent = 'Sil'; }
+mDel.addEventListener('click', async () => {
+  if (!mDel.classList.contains('armed')) {
+    mDel.classList.add('armed');
+    mDel.textContent = 'Emin misin?';
+    delTimer = setTimeout(resetDel, 3000);
+    return;
+  }
+  resetDel();
+  const id = openId;
+  closeModal();
+  try {
+    await db.collection('users').doc(USER.uid).collection('shots').doc(id).delete();
+    toast('Görüntü silindi', 'ok');
+  } catch (e) { toast('Silinemedi', 'err'); }
+});
+
+/* ---------------- kısayollar ---------------- */
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !modal.hidden) { closeModal(); return; }
+  if (e.key === '/' && USER && !/input|textarea/i.test(document.activeElement.tagName)) {
+    e.preventDefault();
+    qInput.focus();
+  }
+});
+</script>
+</body>
+</html>
